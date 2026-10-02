@@ -15,14 +15,15 @@ Packaging this as an installable, default-off plugin is **not** a claim that it 
 serving. What has actually been established (host: vLLM-HUST `0.28.1.post1.dev143`,
 vLLM-Ascend-HUST `0.25.1rc2.dev125`, 2x Ascend 910B2, Qwen3.5-35B-A3B, TP2 + EP):
 
-- **Equivalence (tested).** 76 tests pass. The differential test runs the replacement against a
+- **Equivalence (tested).** 84 tests pass. The differential test runs the replacement against a
   verbatim copy of the host function on random expert placements (world 2-16, up to 256
   experts, 1-10 layers, unchanged layers, redundant experts) and requires identical output,
   including dict key order.
 - **Reachability (measured on real serving).** With dynamic EPLB on, `runtime_effective` was
   emitted in both EPLB side processes (the pids that the host logs as "Launched EPLB
   subprocess"), with no errors, and nothing from the two dropped parts.
-- **Component speed (microbenchmark, `bench/microbench.py`, CPU, median of 7):**
+- **Component speed (microbenchmark, `bench/microbench.py`, CPU, median of 7), synthetic
+  placements only:**
 
   | world | layers | expert churn | original | patched | speedup |
   | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -31,15 +32,19 @@ vLLM-Ascend-HUST `0.25.1rc2.dev125`, 2x Ascend 910B2, Qwen3.5-35B-A3B, TP2 + EP)
   | 16 | 58 | 10% / 90% | 410 / 2470 ms | 6.4 / 32.2 ms | 64x / 77x |
   | 32 | 58 | 10% / 90% | 424 / 2596 ms | 7.9 / 37.7 ms | 54x / 69x |
 
-  In serving, the patched planner takes ~0.2 ms per changed layer.
+  **These overstate the real benefit.** They use random placements with heavy churn.
+- **In-situ stage timing (`stageprobe.py`, real serving, 42 plans per arm):** the whole plan takes
+  ~2.0 s; the policy computation is 87% (~1.75 s), `generate_log2phy_map` 11% (~222 ms), and
+  `compose` - the only thing this package changes - **0.4%**: 8.5 ms originally, 7.4 ms patched
+  (1.15x). The best this package can save is about 1 ms per plan.
 - **End-to-end (swe-prefix-reuse C8, 900 s): no advantage.** Six valid runs, default planner
   window (50 iterations, OFF/ON) and a narrow window (10 iterations, OFF/ON/ON/OFF). Output
   throughput differs by -0.02% (default) and -0.03% (narrow); decode P90, TPOT and E2E are flat
   within noise. The time the main process waits for the plan did **not** shrink (it is +4.5% to
   +7.3% in ON, smaller than the 5.9% spread between the two OFF runs). The one favourable signal,
   narrow-window TTFT P95 -7.6%, has two repeats, no matching movement in other metrics and no
-  mechanism, so it is **unconfirmed**. The likely reason is that `compose` is not the dominant
-  part of planning time; that has **not** been verified by timing the planner's stages.
+  mechanism, so it is **unconfirmed**. The reason there is no serving-level gain is now measured:
+  `compose` is 0.4% of planning time (see stage timing above).
   Full tables, caveats and the ledger-gate status are in [docs/REPORT.md](docs/REPORT.md).
 
 ## The EPLB process is spawned
