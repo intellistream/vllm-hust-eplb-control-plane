@@ -164,16 +164,22 @@ def _make_compose(worker_mod: Any) -> Any:
 def _child_entry(eplb_process: Any, planner_q: Any, block_update_q: Any) -> None:
     """Target of the spawned EPLB process (module level so it pickles by reference).
 
-    Installs the planner patch in the fresh interpreter, then runs the host's own
-    ``worker_process`` unchanged.
+    Installs the planner patch (when enabled) and the measurement-only stage probe (when
+    requested) in the fresh interpreter, then runs the host's own ``worker_process`` unchanged.
     """
-    if not _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_KILL_SWITCH") and _enabled(
-        "VLLM_HUST_EPLB_CONTROL_PLANE_ENABLE"
-    ):
-        from vllm_ascend.eplb.core import eplb_worker
+    if not _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_KILL_SWITCH"):
+        patch = _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_ENABLE")
+        stage = _enabled("VLLM_HUST_EPLB_STAGE_PROBE")
+        if patch or stage:
+            from vllm_ascend.eplb.core import eplb_worker
 
-        # The child never spawns another EPLB process, so no launcher is needed here.
-        _install(eplb_worker, install_launcher=False)
+            if patch:
+                # The child never spawns another EPLB process, so no launcher is needed here.
+                _install(eplb_worker, install_launcher=False)
+            if stage:
+                from . import stageprobe
+
+                stageprobe.install(eplb_worker)
     eplb_process.worker_process(planner_q, block_update_q)
 
 
@@ -196,10 +202,10 @@ def _make_launch_process(worker_mod: Any) -> Any:
 # ------------------------------------------------------------------ installation
 
 
-def _install(worker_mod: Any, install_launcher: bool = True) -> None:
+def _install(worker_mod: Any, install_launcher: bool = True, patch: bool = True) -> None:
     worker_cls = worker_mod.EplbWorker
     process_cls = worker_mod.EplbProcess
-    if not getattr(worker_cls, PATCH_MARKER, False):
+    if patch and not getattr(worker_cls, PATCH_MARKER, False):
         _supported_worker(worker_cls)
         worker_cls.compose_expert_update_info_greedy = _make_compose(worker_mod)
         setattr(worker_cls, PATCH_MARKER, True)
@@ -220,10 +226,14 @@ def register() -> None:
     if _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_KILL_SWITCH"):
         LOGGER.warning("eplb-control-plane kill switch is active; not installed")
         return
-    if not _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_ENABLE"):
+    patch = _enabled("VLLM_HUST_EPLB_CONTROL_PLANE_ENABLE")
+    stage = _enabled("VLLM_HUST_EPLB_STAGE_PROBE")
+    if not patch and not stage:
         LOGGER.info("eplb-control-plane is discovered but disabled")
         return
 
     from vllm_ascend.eplb.core import eplb_worker
 
-    _install(eplb_worker)
+    # With only the stage probe requested, the launcher is installed (so the child runs the
+    # probe) but the planner itself is left untouched.
+    _install(eplb_worker, patch=patch)
