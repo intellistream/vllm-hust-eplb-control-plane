@@ -1,0 +1,68 @@
+{
+  "schema_version": "0.2-experimental",
+  "extension_id": "org.vllm-hust.eplb-control-plane",
+  "extension_version": "0.1.0.dev0",
+  "kind": "in_process_plugin",
+  "host": {
+    "provider": "vllm",
+    "name": "vllm-hust",
+    "version_range": ">=0.28,<0.29"
+  },
+  "runtime": {
+    "type": "python",
+    "process_scope": "worker",
+    "isolation": "trusted_in_process"
+  },
+  "lifecycle_owner": "vllm",
+  "protocols": [
+    {
+      "name": "vllm.general-plugin",
+      "version_range": null
+    }
+  ],
+  "implementation": [
+    {
+      "type": "python_module",
+      "module": "vllm_hust_eplb_control_plane.plugin",
+      "object": "register",
+      "status": "active"
+    }
+  ],
+  "requires_services": [],
+  "components": [
+    {
+      "component_id": "eplb-greedy-plan",
+      "contracts": [
+        "vllm.general-plugin.experimental"
+      ],
+      "execution_planes": [
+        "worker"
+      ],
+      "isolation": "trusted_in_process",
+      "implementation_ref": "vllm_hust_eplb_control_plane.plugin:register",
+      "permissions": [
+        "device_access"
+      ]
+    }
+  ],
+  "activation": {
+    "entry_points": [
+      {
+        "group": "vllm.general_plugins",
+        "name": "eplb_control_plane"
+      }
+    ],
+    "environment": {
+      "VLLM_HUST_EPLB_CONTROL_PLANE_ENABLE": "0",
+      "VLLM_HUST_EPLB_CONTROL_PLANE_KILL_SWITCH": "0",
+      "VLLM_HUST_EPLB_CONTROL_PLANE_EVIDENCE": "1"
+    },
+    "additional_config": {
+      "admission_status": "candidate_not_admitted",
+      "source_ascend": "46e5edf06f4f7cd3f1be60f9e0a98a4e14f235b5",
+      "ledger_repository": "https://github.com/vLLM-HUST/vllm-hust-legacy017-perf",
+      "ledger_patchset": "ascend-eplb-control-plane",
+      "ledger_pr": "vllm-ascend-hust-legacy#36"
+    }
+  }
+}
