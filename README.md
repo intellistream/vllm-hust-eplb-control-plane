@@ -15,7 +15,7 @@ Packaging this as an installable, default-off plugin is **not** a claim that it 
 serving. What has actually been established (host: vLLM-HUST `0.28.1.post1.dev143`,
 vLLM-Ascend-HUST `0.25.1rc2.dev125`, 2x Ascend 910B2, Qwen3.5-35B-A3B, TP2 + EP):
 
-- **Equivalence (tested).** 73 tests pass. The differential test runs the replacement against a
+- **Equivalence (tested).** 76 tests pass. The differential test runs the replacement against a
   verbatim copy of the host function on random expert placements (world 2-16, up to 256
   experts, 1-10 layers, unchanged layers, redundant experts) and requires identical output,
   including dict key order.
@@ -32,12 +32,15 @@ vLLM-Ascend-HUST `0.25.1rc2.dev125`, 2x Ascend 910B2, Qwen3.5-35B-A3B, TP2 + EP)
   | 32 | 58 | 10% / 90% | 424 / 2596 ms | 7.9 / 37.7 ms | 54x / 69x |
 
   In serving, the patched planner takes ~0.2 ms per changed layer.
-- **Not measured: end-to-end effect.** No OFF/ON throughput or latency comparison was run. The
-  planner runs in a side process, off the serving critical path, except through one place: the
-  main process blocks on `block_update_q.get()` when the plan is not ready
-  `algorithm_execution_interval` iterations after heat collection. A faster plan can only help
-  if planning actually exceeded that window. That has not been checked, so no serving-level
-  benefit is claimed.
+- **End-to-end (swe-prefix-reuse C8, 900 s): no advantage.** Six valid runs, default planner
+  window (50 iterations, OFF/ON) and a narrow window (10 iterations, OFF/ON/ON/OFF). Output
+  throughput differs by -0.02% (default) and -0.03% (narrow); decode P90, TPOT and E2E are flat
+  within noise. The time the main process waits for the plan did **not** shrink (it is +4.5% to
+  +7.3% in ON, smaller than the 5.9% spread between the two OFF runs). The one favourable signal,
+  narrow-window TTFT P95 -7.6%, has two repeats, no matching movement in other metrics and no
+  mechanism, so it is **unconfirmed**. The likely reason is that `compose` is not the dominant
+  part of planning time; that has **not** been verified by timing the planner's stages.
+  Full tables, caveats and the ledger-gate status are in [docs/REPORT.md](docs/REPORT.md).
 
 ## The EPLB process is spawned
 
@@ -84,10 +87,17 @@ EPLB itself is off by default. To exercise this package: `DYNAMIC_EPLB=true` plu
 Each patch refuses (`RuntimeError`) unless the exact expected source marker is present, so an
 unrecognised or already-optimised host is never patched speculatively.
 
+## Measurement probe
+
+`probe.py` is a separate, default-off entry point (`VLLM_HUST_EPLB_WAIT_PROBE=1`, independent of
+`ENABLE`) that prints `EPLB_WAIT_PROBE wait_ms=... pid=...` each time the main process fetches the
+plan, so the OFF arm can be measured on the same quantity. It is instrumentation, not part of the
+optimization.
+
 ## Testing
 
 ```
-python -m pytest tests/        # 11 tests run without torch; the rest need torch
+python -m pytest tests/        # 14 tests run without torch; the rest need torch
 python bench/microbench.py     # on the NPU container, after sourcing the ATB env
 ```
 
